@@ -22,4 +22,4 @@ jobs:
             git pull origin master
             source venv/bin/activate
             pip install -r requirements.txt
-            sudo systemctl restart sample-python-app
+            sudo systemctl stop sample-python-app
