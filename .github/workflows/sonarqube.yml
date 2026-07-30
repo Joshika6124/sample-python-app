@@ -34,6 +34,13 @@ jobs:
         with:
           sonar-host-url: ${{ secrets.SONAR_HOST_URL }}
           sonar-token: ${{ secrets.SONAR_TOKEN }}
+          
+      - name: Convert SonarQube issues to SARIF
+        uses: vmvarela/sonarqube-sarif@v1
+        with:
+          sonar-host-url: ${{ secrets.SONAR_HOST_URL }}
+          sonar-token: ${{ secrets.SONAR_TOKEN }}
+          project-key: sample_python_github
 
       - name: Upload SARIF to GitHub Security tab
         if: github.event_name != 'pull_request'
