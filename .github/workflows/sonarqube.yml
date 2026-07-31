@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [ master ]
 
+permissions:
+  security-events: write
+  checks: write
+  pull-requests: write
+  contents: read
+
 jobs:
   sonarqube:
     runs-on: self-hosted
@@ -22,3 +28,16 @@ jobs:
         env:
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+      - name: Convert SonarQube issues to SARIF
+        uses: vmvarela/sonarqube-sarif@v1
+        with:
+          sonar-host-url: ${{ secrets.SONAR_HOST_URL }}
+          sonar-token: ${{ secrets.SONAR_TOKEN }}
+          project-key: sample_python_github
+
+      - name: Upload SARIF to GitHub Security tab
+        if: github.event_name != 'pull_request'
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: sonarqube.sarif
