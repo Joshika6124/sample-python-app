@@ -2,7 +2,10 @@ name: SonarQube Analysis
 
 on:
   push:
-    branches: [ master ]
+    branches:
+      - master
+      - develop
+      - 'feature/**'
   pull_request:
     branches: [ master ]
 
@@ -20,11 +23,19 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Extract branch name
+        shell: bash
+        run: echo "branch_name=${GITHUB_REF_NAME//\//-}" >> $GITHUB_OUTPUT
+        id: extract_branch
+
       - name: Add scanner to PATH
         run: echo "$HOME/sonar-scanner/bin" >> $GITHUB_PATH
 
       - name: SonarQube Scan
-        run: sonar-scanner
+        run: >
+          sonar-scanner
+          -Dsonar.projectKey=sample_python_github-${{ steps.extract_branch.outputs.branch_name }}
+          -Dsonar.projectName="sample-python-app (${{ github.ref_name }})"
         env:
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -34,7 +45,7 @@ jobs:
         with:
           sonar-host-url: ${{ secrets.SONAR_HOST_URL }}
           sonar-token: ${{ secrets.SONAR_TOKEN }}
-          project-key: sample_python_github
+          project-key: sample_python_github-${{ steps.extract_branch.outputs.branch_name }}
           wait-for-processing: false
           processing-delay: 15
 
