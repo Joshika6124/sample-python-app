@@ -35,6 +35,8 @@ jobs:
           sonar-host-url: ${{ secrets.SONAR_HOST_URL }}
           sonar-token: ${{ secrets.SONAR_TOKEN }}
           project-key: sample_python_github
+          wait-for-processing: false
+          processing-delay: 15
 
       - name: Upload SARIF to GitHub Security tab
         if: github.event_name != 'pull_request'
