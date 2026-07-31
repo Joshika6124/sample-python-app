@@ -31,7 +31,10 @@ def debug():
 
     # Enable CORS: https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS
     # allow all domains for now
-    response.headers['Access-Control-Allow-Origin'] = '*' 
+    import os
+
+    allowed_origin = os.environ.get('ALLOWED_ORIGIN', 'http://localhost:3000')
+    response.headers['Access-Control-Allow-Origin'] = allowed_origin
     response.headers['Access-Control-Allow-Methods'] = "GET"
 
     return response
