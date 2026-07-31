@@ -30,7 +30,8 @@ def debug():
     response = make_response(cfg_items, 200)
 
     # Enable CORS: https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS
-    response.headers['Access-Control-Allow-Origin'] = '*'  # allow all domains for now
+    # allow all domains for now
+    response.headers['Access-Control-Allow-Origin'] = '*' 
     response.headers['Access-Control-Allow-Methods'] = "GET"
 
     return response
