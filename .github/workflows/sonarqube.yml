@@ -27,11 +27,20 @@ jobs:
         shell: bash
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo "branch_name=${{ github.head_ref }}" >> $GITHUB_OUTPUT
+            RAW_NAME="${{ github.head_ref }}"
           else
-            echo "branch_name=${GITHUB_REF_NAME//\//-}" >> $GITHUB_OUTPUT
+            RAW_NAME="${{ github.ref_name }}"
           fi
+          echo "branch_name=${RAW_NAME//\//-}" >> $GITHUB_OUTPUT
         id: extract_branch
+
+      - name: Set dynamic exclusions
+        run: |
+          if [ "${{ github.ref_name }}" = "master" ]; then
+            echo "EXCLUSIONS=**/test/**" >> $GITHUB_ENV
+          else
+            echo "EXCLUSIONS=**/test/**,**/experimental/**" >> $GITHUB_ENV
+          fi
 
       - name: Add scanner to PATH
         run: echo "$HOME/sonar-scanner/bin" >> $GITHUB_PATH
@@ -40,7 +49,8 @@ jobs:
         run: >
           sonar-scanner
           -Dsonar.projectKey=sample_python_github-${{ steps.extract_branch.outputs.branch_name }}
-          -Dsonar.projectName="sample-python-app (${{ github.ref_name }})"
+          -Dsonar.projectName="sample-python-app (${{ steps.extract_branch.outputs.branch_name }})"
+          -Dsonar.exclusions=**/sonar-scanner/**,**/*.zip,**/images/**,**/*.png,**/*.jpg,**/*.jpeg,${{ env.EXCLUSIONS }}
         env:
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
