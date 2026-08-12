@@ -29,8 +29,12 @@ def debug():
     cfg_items = get_app_debug_info()
     response = make_response(cfg_items, 200)
 
-    # Enable CORS: https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS
-    response.headers['Access-Control-Allow-Origin'] = '*'  # allow all domains for now
+    # Enable CORS
+    allowed_origin = os.environ.get(
+        'ALLOWED_ORIGIN',
+        'http://localhost:3000'
+    )
+    response.headers['Access-Control-Allow-Origin'] = allowed_origin
     response.headers['Access-Control-Allow-Methods'] = "GET"
 
     return response
@@ -39,9 +43,17 @@ def debug():
 @app.route('/debug/ui', methods=['GET'])
 def debug_ui():
     cfg_map = get_app_debug_info()
-    # sort items by key
-    cfg_items = sorted([{'k': k, 'v': v} for k, v in cfg_map.items()], key=lambda x: x['k'].upper())
-    return render_template('debug.html', cfg_items=cfg_items, title='Hello Python Debug!')
+
+    cfg_items = sorted(
+        [{'k': k, 'v': v} for k, v in cfg_map.items()],
+        key=lambda x: x['k'].upper()
+    )
+
+    return render_template(
+        'debug.html',
+        cfg_items=cfg_items,
+        title='Hello Python Debug!'
+    )
 
 
 @app.errorhandler(404)
