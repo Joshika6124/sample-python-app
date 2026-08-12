@@ -2,7 +2,11 @@ name: SonarQube Analysis
 
 on:
   push:
-    branches: [ master ]
+    branches:
+      - master
+      - develop
+      - 'feature/**'
+      - sample_test
   pull_request:
     branches: [ master ]
 
@@ -13,18 +17,35 @@ permissions:
   contents: read
 
 jobs:
-  analyze:
+  sonarqube:
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      - name: Extract branch name
+        shell: bash
+        run: echo "branch_name=${GITHUB_REF_NAME//\//-}" >> $GITHUB_OUTPUT
+        id: extract_branch
+
+      - name: Set dynamic exclusions
+        run: |
+          if [ "${{ github.ref_name }}" = "master" ]; then
+            echo "EXCLUSIONS=**/test/**" >> $GITHUB_ENV
+          else
+            echo "EXCLUSIONS=**/test/**,**/experimental/**" >> $GITHUB_ENV
+          fi
+
       - name: Add scanner to PATH
         run: echo "$HOME/sonar-scanner/bin" >> $GITHUB_PATH
 
       - name: SonarQube Scan
-        run: sonar-scanner
+        run: >
+          sonar-scanner
+          -Dsonar.projectKey=sample_python_github-${{ steps.extract_branch.outputs.branch_name }}
+          -Dsonar.projectName="sample-python-app (${{ github.ref_name }})"
+          -Dsonar.exclusions=**/sonar-scanner/**,**/*.zip,**/images/**,**/*.png,**/*.jpg,**/*.jpeg,${{ env.EXCLUSIONS }}
         env:
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -34,13 +55,9 @@ jobs:
         with:
           sonar-host-url: ${{ secrets.SONAR_HOST_URL }}
           sonar-token: ${{ secrets.SONAR_TOKEN }}
-          
-      - name: Convert SonarQube issues to SARIF
-        uses: vmvarela/sonarqube-sarif@v1
-        with:
-          sonar-host-url: ${{ secrets.SONAR_HOST_URL }}
-          sonar-token: ${{ secrets.SONAR_TOKEN }}
-          project-key: sample_python_github
+          project-key: sample_python_github-${{ steps.extract_branch.outputs.branch_name }}
+          wait-for-processing: false
+          processing-delay: 15
 
       - name: Upload SARIF to GitHub Security tab
         if: github.event_name != 'pull_request'
