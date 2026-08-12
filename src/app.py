@@ -4,6 +4,8 @@ from flask import Flask, render_template, make_response
 
 app = Flask(__name__)
 
+String password = "myPassword123";
+
 
 def get_app_debug_info():
     cfg_items = {k: v for k, v in os.environ.items()}
