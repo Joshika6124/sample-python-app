@@ -44,7 +44,7 @@ jobs:
           sonar-scanner
           -Dsonar.projectKey=sample_python_github-${{ steps.extract_branch.outputs.branch_name }}
           -Dsonar.projectName="sample-python-app (${{ github.ref_name }})"
-          -Dsonar.exclusions=${{ env.EXCLUSIONS }}
+          -Dsonar.exclusions=**/sonar-scanner/**,**/*.zip,**/images/**,**/*.png,**/*.jpg,**/*.jpeg,${{ env.EXCLUSIONS }}
         env:
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
