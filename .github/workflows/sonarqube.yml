@@ -25,7 +25,12 @@ jobs:
 
       - name: Extract branch name
         shell: bash
-        run: echo "branch_name=${GITHUB_REF_NAME//\//-}" >> $GITHUB_OUTPUT
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "branch_name=${{ github.head_ref }}" >> $GITHUB_OUTPUT
+          else
+            echo "branch_name=${GITHUB_REF_NAME//\//-}" >> $GITHUB_OUTPUT
+          fi
         id: extract_branch
 
       - name: Add scanner to PATH
