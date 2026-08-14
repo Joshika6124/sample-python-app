@@ -1,5 +1,4 @@
 name: SonarQube Analysis
-
 on:
   push:
     branches:
@@ -8,13 +7,11 @@ on:
       - 'feature/**'
   pull_request:
     branches: [ master ]
-
 permissions:
   security-events: write
   checks: write
   pull-requests: write
   contents: read
-
 jobs:
   sonarqube:
     runs-on: self-hosted
@@ -22,6 +19,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # For PRs, check out the actual PR head commit (not the merge commit)
+          # so SARIF results map to the right SHA
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.ref }}
 
       - name: Extract branch name
         shell: bash
@@ -36,7 +36,7 @@ jobs:
 
       - name: Set dynamic exclusions
         run: |
-          if [ "${{ github.ref_name }}" = "master" ]; then
+          if [ "${{ steps.extract_branch.outputs.branch_name }}" = "master" ]; then
             echo "EXCLUSIONS=**/test/**" >> $GITHUB_ENV
           else
             echo "EXCLUSIONS=**/test/**,**/experimental/**" >> $GITHUB_ENV
@@ -45,7 +45,8 @@ jobs:
       - name: Add scanner to PATH
         run: echo "$HOME/sonar-scanner/bin" >> $GITHUB_PATH
 
-      - name: SonarQube Scan
+      - name: SonarQube Scan (push)
+        if: github.event_name != 'pull_request'
         run: >
           sonar-scanner
           -Dsonar.projectKey=sample_python_github-${{ steps.extract_branch.outputs.branch_name }}
@@ -55,17 +56,32 @@ jobs:
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
+      - name: SonarQube Scan (pull request)
+        if: github.event_name == 'pull_request'
+        run: >
+          sonar-scanner
+          -Dsonar.projectKey=sample_python_github-master
+          -Dsonar.projectName="sample-python-app (master)"
+          -Dsonar.exclusions=**/sonar-scanner/**,**/*.zip,**/images/**,**/*.png,**/*.jpg,**/*.jpeg,${{ env.EXCLUSIONS }}
+          -Dsonar.pullrequest.key=${{ github.event.pull_request.number }}
+          -Dsonar.pullrequest.branch=${{ steps.extract_branch.outputs.branch_name }}
+          -Dsonar.pullrequest.base=${{ github.base_ref }}
+        env:
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
       - name: Convert SonarQube issues to SARIF
         uses: vmvarela/sonarqube-sarif@v1
         with:
           sonar-host-url: ${{ secrets.SONAR_HOST_URL }}
           sonar-token: ${{ secrets.SONAR_TOKEN }}
-          project-key: sample_python_github-${{ steps.extract_branch.outputs.branch_name }}
-          wait-for-processing: false
+          project-key: ${{ github.event_name == 'pull_request' && 'sample_python_github-master' || format('sample_python_github-{0}', steps.extract_branch.outputs.branch_name) }}
+          wait-for-processing: true
           processing-delay: 15
 
       - name: Upload SARIF to GitHub Security tab
-        if: github.event_name != 'pull_request'
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: sonarqube.sarif
+          ref: ${{ github.event_name == 'pull_request' && format('refs/pull/{0}/merge', github.event.pull_request.number) || github.ref }}
+          sha: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
