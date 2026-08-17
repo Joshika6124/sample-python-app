@@ -4,6 +4,7 @@ from flask import Flask, render_template, make_response
 
 app = Flask(__name__)
 
+#example branch
 
 def get_app_debug_info():
     cfg_items = {k: v for k, v in os.environ.items()}
@@ -30,7 +31,11 @@ def debug():
     response = make_response(cfg_items, 200)
 
     # Enable CORS: https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS
-    response.headers['Access-Control-Allow-Origin'] = '*'  # allow all domains for now
+    # allow all domains for now
+    import os
+
+    allowed_origin = os.environ.get('ALLOWED_ORIGIN', 'http://localhost:3000')
+    response.headers['Access-Control-Allow-Origin'] = allowed_origin
     response.headers['Access-Control-Allow-Methods'] = "GET"
 
     return response

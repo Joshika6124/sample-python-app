@@ -1,5 +1,4 @@
 name: SonarQube Analysis
-
 on:
   push:
     branches:
@@ -19,10 +18,34 @@ permissions:
 jobs:
   sonarqube:
     runs-on: self-hosted
+    env:
+      EXCLUSIONS: ""   # placeholder so the editor's linter recognizes env.EXCLUSIONS
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # For PRs, check out the actual PR head commit (not the merge commit)
+          # so SARIF results map to the right SHA
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.ref }}
+
+      - name: Extract branch name
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            RAW_NAME="${{ github.head_ref }}"
+          else
+            RAW_NAME="${{ github.ref_name }}"
+          fi
+          echo "branch_name=${RAW_NAME//\//-}" >> $GITHUB_OUTPUT
+        id: extract_branch
+
+      - name: Set dynamic exclusions
+        run: |
+          if [ "${{ steps.extract_branch.outputs.branch_name }}" = "master" ]; then
+            echo "EXCLUSIONS=**/test/**" >> $GITHUB_ENV
+          else
+            echo "EXCLUSIONS=**/test/**,**/experimental/**" >> $GITHUB_ENV
+          fi
 
       - name: Extract branch name
         shell: bash
