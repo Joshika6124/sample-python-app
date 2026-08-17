@@ -15,6 +15,8 @@ permissions:
 jobs:
   sonarqube:
     runs-on: self-hosted
+    env:
+      EXCLUSIONS: ""   # placeholder so the editor's linter recognizes env.EXCLUSIONS
     steps:
       - uses: actions/checkout@v4
         with:
