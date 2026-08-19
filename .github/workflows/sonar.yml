@@ -1,0 +1,306 @@
+name: SonarQube Analysis
+on:
+  push:
+    branches:
+      - dev
+      - dev_sonar
+      - dev-sonar1
+  pull_request:
+    branches: [ dev , dev-sonar1 ]
+permissions:
+  security-events: write
+  checks: write
+  pull-requests: write
+  contents: write
+  actions: read
+jobs:
+  sonarqube:
+    runs-on: self-hosted
+    env:
+      EXCLUSIONS: ""
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.ref }}
+
+      - name: Extract branch name
+        shell: powershell
+        run: |
+          if ("${{ github.event_name }}" -eq "pull_request") {
+            $RAW_NAME = "${{ github.head_ref }}"
+          } else {
+            $RAW_NAME = "${{ github.ref_name }}"
+          }
+          $branch_name = $RAW_NAME -replace '/', '-'
+          echo "branch_name=$branch_name" >> $env:GITHUB_OUTPUT
+        id: extract_branch
+
+      - name: Set dynamic exclusions
+        shell: powershell
+        run: |
+          if ("${{ steps.extract_branch.outputs.branch_name }}" -eq "dev") {
+            echo "EXCLUSIONS=**/test/**" >> $env:GITHUB_ENV
+          } else {
+            echo "EXCLUSIONS=**/test/**,**/experimental/**" >> $env:GITHUB_ENV
+          }
+
+      - name: Add scanner to PATH
+        shell: powershell
+        run: echo "${{ vars.SONAR_SCANNER_HOME }}" >> $env:GITHUB_PATH
+
+      - name: SonarQube Scan
+        shell: powershell
+        run: >
+          sonar-scanner
+          "-Dsonar.projectKey=Genix-${{ steps.extract_branch.outputs.branch_name }}"
+          "-Dsonar.projectName=Genix (${{ steps.extract_branch.outputs.branch_name }})"
+          "-Dsonar.exclusions=**/sonar-scanner/**,**/*.zip,**/images/**,**/*.png,**/*.jpg,**/*.jpeg,**/*.sql,${{ env.EXCLUSIONS }}"
+        env:
+          SONAR_HOST_URL: ${{ secrets.SONARQUBE_URL }}
+          SONAR_TOKEN: ${{ secrets.SONARQUBE_TOKEN }}
+
+      - name: Convert SonarQube issues to SARIF
+        uses: vmvarela/sonarqube-sarif@v1
+        with:
+          sonar-host-url: ${{ secrets.SONARQUBE_URL }}
+          sonar-token: ${{ secrets.SONARQUBE_TOKEN }}
+          project-key: Genix-${{ steps.extract_branch.outputs.branch_name }}
+          wait-for-processing: true
+          processing-delay: 15
+          pr-comment: false
+
+      - name: Upload SARIF as workflow artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sonarqube-sarif-${{ steps.extract_branch.outputs.branch_name }}
+          path: sonarqube.sarif
+          retention-days: 30
+
+      - name: Post PR comment with issue summary
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            // Parses a unified diff patch and returns the set of NEW-file line numbers that were added/changed
+            function getAddedLines(patch) {
+              const added = new Set();
+              if (!patch) return added;
+              let newLine = 0;
+              for (const line of patch.split('\n')) {
+                const hunkMatch = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+                if (hunkMatch) {
+                  newLine = parseInt(hunkMatch[1], 10);
+                  continue;
+                }
+                if (line.startsWith('+') && !line.startsWith('+++')) {
+                  added.add(newLine);
+                  newLine++;
+                } else if (!line.startsWith('-')) {
+                  newLine++;
+                }
+              }
+              return added;
+            }
+
+            // Get changed files + their diffs (paginated)
+            const changedFilesResp = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+              per_page: 100
+            });
+
+            // Map: normalized file path -> Set of added/changed line numbers
+            const fileLineMap = new Map();
+            for (const f of changedFilesResp) {
+              const path = f.filename.replace(/\\/g, '/');
+              fileLineMap.set(path, getAddedLines(f.patch));
+            }
+
+            const sarif = JSON.parse(fs.readFileSync('sonarqube.sarif', 'utf8'));
+            const allResults = (sarif.runs && sarif.runs[0] && sarif.runs[0].results) || [];
+
+            // Keep only results whose file AND line match an added/changed line in the PR diff
+            const results = allResults.filter(r => {
+              const loc = r.locations?.[0]?.physicalLocation;
+              const uri = loc?.artifactLocation?.uri;
+              const line = loc?.region?.startLine;
+              if (!uri || !line) return false;
+              const normalized = uri.replace(/\\/g, '/').replace(/^\.?\//, '');
+
+              for (const [changedPath, lineSet] of fileLineMap.entries()) {
+                if ((normalized.endsWith(changedPath) || changedPath.endsWith(normalized)) && lineSet.has(line)) {
+                  return true;
+                }
+              }
+              return false;
+            });
+
+            const counts = { error: 0, warning: 0, note: 0 };
+            for (const r of results) {
+              const level = r.level || 'warning';
+              if (counts[level] !== undefined) counts[level]++;
+            }
+            const total = results.length;
+
+            let issueList = '';
+            if (total > 0) {
+              issueList = '\n\n<details><summary>Issue details</summary>\n\n' +
+                results.map(r => {
+                  const loc = r.locations?.[0]?.physicalLocation;
+                  const file = loc?.artifactLocation?.uri || 'unknown';
+                  const line = loc?.region?.startLine || '?';
+                  const msg = r.message?.text || '';
+                  return `- **${file}:${line}** (${r.level}) — ${msg}`;
+                }).join('\n') +
+                '\n\n</details>';
+            }
+
+            const body = `### SonarQube Analysis Results (changed lines only)\n\n` +
+              `**Total issues found:** ${total}\n\n` +
+              `| Severity | Count |\n|---|---|\n` +
+              `| Error | ${counts.error} |\n` +
+              `| Warning | ${counts.warning} |\n` +
+              `| Note | ${counts.note} |\n` +
+              issueList +
+              `\n\nFull SARIF results are attached as a downloadable artifact on this workflow run.`;
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body
+            });
+      - name: Send SonarQube email notification
+        if: always()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_SERVER }}
+          server_port: ${{ secrets.SMTP_PORT }}
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: "SonarQube Analysis - Genix (${{ steps.extract_branch.outputs.branch_name }}) - ${{ job.status }}"
+          to: ${{ secrets.NOTIFY_EMAIL_LIST }}
+          from: "GitHub Actions <${{ secrets.SMTP_USERNAME }}>"
+          body: |
+            SonarQube analysis completed for Genix-${{ steps.extract_branch.outputs.branch_name }}.
+
+            Trigger: ${{ github.event_name }}
+            Branch: ${{ steps.extract_branch.outputs.branch_name }}
+            Commit: ${{ github.sha }}
+            Triggered by: ${{ github.actor }}
+            Status: ${{ job.status }}
+
+            Dashboard: ${{ secrets.SONARQUBE_URL }}/dashboard?id=Genix-${{ steps.extract_branch.outputs.branch_name }}
+            Full workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+
+  deploy:
+    needs: sonarqube
+    if: github.event_name == 'push' && contains(fromJSON('["dev","dev_sonar","dev-sonar1"]'), github.ref_name)
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref }}
+
+      - name: Determine commit range since last deployment
+        id: range
+        shell: powershell
+        run: |
+          $branch = "${{ github.ref_name }}"
+          $tagName = "last-deploy-$branch"
+          git fetch --tags --force
+
+          $tagExists = git tag -l $tagName
+          if ($tagExists) {
+            $range = "$tagName..HEAD"
+          } else {
+            $range = "HEAD~1..HEAD"
+          }
+          echo "tag_name=$tagName" >> $env:GITHUB_OUTPUT
+          echo "range=$range" >> $env:GITHUB_OUTPUT
+
+      - name: Collect commits and PRs in this deployment
+        id: log
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { execSync } = require('child_process');
+            const range = "${{ steps.range.outputs.range }}";
+            const raw = execSync(`git log ${range} --pretty=format:"%H|%h|%an|%s"`).toString();
+            const lines = raw.split('\n').filter(Boolean);
+
+            const commitLines = [];
+            const prMap = new Map();
+
+            for (const line of lines) {
+              const [fullSha, shortSha, author, ...rest] = line.split('|');
+              const subject = rest.join('|');
+              commitLines.push(`- \`${shortSha}\` ${subject} (${author})`);
+
+              try {
+                const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  commit_sha: fullSha
+                });
+                for (const pr of prs) {
+                  if (!prMap.has(pr.number)) {
+                    prMap.set(pr.number, { title: pr.title, url: pr.html_url, author: pr.user.login });
+                  }
+                }
+              } catch (e) {}
+            }
+
+            const prLines = [...prMap.entries()].map(
+              ([num, pr]) => `- #${num} ${pr.title} (${pr.url}) by @${pr.author}`
+            );
+
+            core.setOutput('commits_body', commitLines.length ? commitLines.join('\n') : '_No new commits_');
+            core.setOutput('prs_body', prLines.length ? prLines.join('\n') : '_No PRs detected in this range_');
+            core.setOutput('commit_count', commitLines.length);
+            core.setOutput('pr_count', prLines.length);
+
+      - name: Run existing deploy script
+        shell: powershell
+        run: |
+          & "C:\path\to\your\deploy-script.ps1"   # replace with your actual script/command
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Move deployment marker tag
+        if: success()
+        shell: powershell
+        run: |
+          $tagName = "${{ steps.range.outputs.tag_name }}"
+          git tag -f $tagName
+          git push origin $tagName --force
+
+      - name: Send deployment email notification
+        if: always()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_SERVER }}
+          server_port: ${{ secrets.SMTP_PORT }}
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: "Deployment - Genix (${{ github.ref_name }}) - ${{ job.status }}"
+          to: ${{ secrets.NOTIFY_EMAIL_LIST }}
+          from: "GitHub Actions <${{ secrets.SMTP_USERNAME }}>"
+          body: |
+            Deployment status: ${{ job.status }}
+            Branch: ${{ github.ref_name }}
+            Deployed by: ${{ github.actor }}
+
+            Pull Requests included (${{ steps.log.outputs.pr_count }}):
+            ${{ steps.log.outputs.prs_body }}
+
+            Commits included (${{ steps.log.outputs.commit_count }}):
+            ${{ steps.log.outputs.commits_body }}
+
+            Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
